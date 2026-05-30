@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="eu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Etxea">
+<meta name="theme-color" content="#1C1C1E">
+<title>Etxeko Zereginak</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;background:#F7F5F2;min-height:100vh;max-width:430px;margin:0 auto;overscroll-behavior:none}
+  button{cursor:pointer;font-family:inherit}
+  input{font-family:inherit}
+  ::-webkit-scrollbar{display:none}
+  .safe-top{padding-top:env(safe-area-inset-top,20px)}
+  .safe-bottom{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 16px)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const ROOMS=[
+  {id:"sukaldea",name:"Sukaldea",color:"#FF6B35",bg:"#FFF3EE",emoji:"🍳"},
+  {id:"egongela",name:"Egongela",color:"#4ECDC4",bg:"#F0FFFE",emoji:"🛋️"},
+  {id:"logela",name:"Logela",color:"#9B59B6",bg:"#F8F0FD",emoji:"🛏️"},
+  {id:"bainugela",name:"Bainugela",color:"#3498DB",bg:"#EFF8FF",emoji:"🚿"},
+  {id:"bulegoa",name:"Bulegoa",color:"#27AE60",bg:"#F0FFF4",emoji:"💼"},
+  {id:"kanpoa",name:"Kanpoa",color:"#E67E22",bg:"#FFF8F0",emoji:"🌿"}
+];
+const REPEAT_OPTIONS=[
+  {value:"none",label:"Behin"},
+  {value:"daily",label:"Egunero"},
+  {value:"weekly",label:"Astero"},
+  {value:"biweekly",label:"Hamabostean behin"},
+  {value:"monthly",label:"Hilero"},
+  {value:"biannual",label:"Urtean bitan"}
+];
+const DAYS_EU=["Ig","Al","Ar","Az","Og","Or","La"];
+const MONTHS_EU=["Urt","Ots","Mar","Api","Mai","Eka","Uzt","Abu","Ira","Urr","Aza","Abe"];
+const MONTHS_FULL=["Urtarrila","Otsaila","Martxoa","Apirila","Maiatza","Ekaina","Uztaila","Abuztu","Iraila","Urria","Azaroa","Abendua"];
+
+// ── State ─────────────────────────────────────────────────────────────
+function loadTasks(){
+  try{
+    const s=localStorage.getItem("etxeko_tasks");
+    return s?JSON.parse(s):[
+      {id:1,title:"Lurra garbitu",room:"egongela",date:today(),repeat:"weekly",done:{}},
+      {id:2,title:"Plater garbitzaillea hustu",room:"sukaldea",date:today(),repeat:"daily",done:{}},
+      {id:3,title:"Ohe egin",room:"logela",date:today(),repeat:"daily",done:{}},
+      {id:4,title:"Bainugela garbitu",room:"bainugela",date:today(),repeat:"weekly",done:{}}
+    ];
+  }catch(e){return[];}
+}
+function saveTasks(t){try{localStorage.setItem("etxeko_tasks",JSON.stringify(t));}catch(e){}}
+
+let state={
+  view:"calendar",
+  calView:"week",
+  currentDate:new Date(),
+  tasks:loadTasks(),
+  showModal:false,
+  editingTask:null,
+  newTask:{title:"",room:"sukaldea",date:today(),repeat:"weekly"},
+  filterRoom:"all",
+  demoHistory:genDemoHistory()
+};
+
+function genDemoHistory(){
+  const h={},now=new Date();
+  for(let m=5;m>=1;m--){
+    const d=new Date(now.getFullYear(),now.getMonth()-m,1);
+    h[`${d.getFullYear()}-${d.getMonth()}`]=55+Math.floor(Math.random()*40);
+  }
+  return h;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+function today(){return new Date().toISOString().split("T")[0];}
+function dateKey(d){const x=new Date(d);return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;}
+function getDaysInMonth(y,m){return new Date(y,m+1,0).getDate();}
+function getFirstDayOfMonth(y,m){return new Date(y,m,1).getDay();}
+function getWeekDays(date){
+  const d=new Date(date),day=d.getDay(),diff=d.getDate()-day;
+  return Array.from({length:7},(_,i)=>{const dd=new Date(d);dd.setDate(diff+i);return dd;});
+}
+function shouldShowOnDate(task,date){
+  const td=new Date(task.date);td.setHours(0,0,0,0);
+  const cd=new Date(date);cd.setHours(0,0,0,0);
+  if(task.repeat==="none")return td.getTime()===cd.getTime();
+  if(td>cd)return false;
+  const diffDays=Math.round((cd-td)/86400000);
+  if(task.repeat==="daily")return true;
+  if(task.repeat==="weekly")return diffDays%7===0;
+  if(task.repeat==="biweekly")return diffDays%14===0;
+  if(task.repeat==="monthly")return cd.getDate()===td.getDate();
+  if(task.repeat==="biannual"){
+    const mo=(cd.getFullYear()-td.getFullYear())*12+(cd.getMonth()-td.getMonth());
+    return cd.getDate()===td.getDate()&&mo%6===0;
+  }
+  return false;
+}
+function isDone(task,date){return!!task.done[dateKey(date)];}
+function getRoom(id){return ROOMS.find(r=>r.id===id)||ROOMS[0];}
+function completionColor(pct){
+  if(pct===null)return"#E8E5E0";
+  if(pct>=80)return"#27AE60";
+  if(pct>=50)return"#F39C12";
+  return"#E74C3C";
+}
+function getMonthRate(tasks,year,month){
+  const dim=getDaysInMonth(year,month);
+  let total=0,done=0;
+  const now=new Date();
+  for(let day=1;day<=dim;day++){
+    const d=new Date(year,month,day,23,0,0);
+    if(d>now)continue;
+    tasks.forEach(t=>{
+      if(shouldShowOnDate(t,d)){total++;if(t.done[dateKey(d)])done++;}
+    });
+  }
+  return total===0?null:Math.round(done/total*100);
+}
+function getDayRate(tasks,date){
+  const dt=tasks.filter(t=>shouldShowOnDate(t,date));
+  if(!dt.length)return null;
+  return Math.round(dt.filter(t=>isDone(t,date)).length/dt.length*100);
+}
+
+// ── Render ────────────────────────────────────────────────────────────
+function render(){
+  const el=document.getElementById("app");
+  el.innerHTML="";
+  el.appendChild(buildApp());
+  animateBars();
+}
+
+function setState(update,noSave){
+  Object.assign(state,update);
+  if(!noSave&&update.tasks)saveTasks(state.tasks);
+  render();
+}
+
+function h(tag,attrs={},children=[]){
+  const el=document.createElement(tag);
+  Object.entries(attrs).forEach(([k,v])=>{
+    if(k==="style"&&typeof v==="object"){Object.assign(el.style,v);}
+    else if(k.startsWith("on"))el[k.toLowerCase()]=v;
+    else el.setAttribute(k,v);
+  });
+  children.forEach(c=>{
+    if(c===null||c===undefined)return;
+    el.appendChild(typeof c==="string"?document.createTextNode(c):c);
+  });
+  return el;
+}
+
+function animateBars(){
+  setTimeout(()=>{
+    document.querySelectorAll(".anim-bar-inner").forEach(b=>{
+      const pct=parseFloat(b.dataset.pct||0);
+      const delay=parseFloat(b.dataset.delay||0);
+      setTimeout(()=>{b.style.width=pct+"%";},delay);
+    });
+  },50);
+}
+
+function buildApp(){
+  const s=state;
+  const now=new Date();
+  now.setHours(0,0,0,0);
+
+  // Header
+  const header=h("div",{style:{background:"#1C1C1E",position:"sticky",top:0,zIndex:100}},[
+    h("div",{style:{padding:"16px 20px 0",paddingTop:"max(16px, env(safe-area-inset-top, 16px))"}},[
+      h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:16}},[
+        h("div",{},[
+          h("div",{style:{color:"#8E8E93",fontSize:11,letterSpacing:2,textTransform:"uppercase",marginBottom:2}},["Etxea"]),
+          h("div",{style:{color:"#fff",fontSize:24,fontWeight:700,letterSpacing:"-0.5px"}},["Zereginak"])
+        ]),
+        h("button",{style:{background:"#FF6B35",color:"#fff",border:"none",borderRadius:"50%",width:38,height:38,fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(255,107,53,0.4)"},onClick:openAddModal},["+"])
+      ]),
+      h("div",{style:{display:"flex"}},[
+        ...["calendar","tasks","stats"].map((v,i)=>{
+          const labels=["📅 Egutegia","📋 Zeregindak","📊 Estatistikak"];
+          return h("button",{style:{flex:1,background:"none",border:"none",padding:"10px 0",fontSize:12,fontWeight:600,color:s.view===v?"#FF6B35":"#8E8E93",borderBottom:s.view===v?"2px solid #FF6B35":"2px solid transparent"},onClick:()=>setState({view:v})},[labels[i]]);
+        })
+      ])
+    ])
+  ]);
+
+  let content;
+  if(s.view==="calendar") content=buildCalendar(now);
+  else if(s.view==="tasks") content=buildTasks();
+  else content=buildStats();
+
+  const modal=s.showModal?buildModal():null;
+
+  const wrap=h("div",{},[header,content,modal].filter(Boolean));
+  return wrap;
+}
+
+// ── CALENDAR ──────────────────────────────────────────────────────────
+function buildCalendar(todayD){
+  const s=state;
+  const cd=s.currentDate;
+  const year=cd.getFullYear(),month=cd.getMonth();
+  const weekDays=getWeekDays(cd);
+
+  const toggle=h("div",{style:{display:"flex",gap:6,margin:"16px 16px 0",background:"#E8E5E0",borderRadius:10,padding:4}},[
+    ...["week","month"].map((v,i)=>
+      h("button",{style:{flex:1,background:s.calView===v?"#fff":"none",border:"none",padding:"7px 0",fontSize:13,fontWeight:600,color:s.calView===v?"#1C1C1E":"#8E8E93",borderRadius:8,boxShadow:s.calView===v?"0 1px 4px rgba(0,0,0,0.1)":"none"},onClick:()=>setState({calView:v})},[ ["Astekoa","Hilekoa"][i] ])
+    )
+  ]);
+
+  const nav=h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px 0"}},[
+    h("button",{style:{background:"none",border:"none",fontSize:22,color:"#1C1C1E",padding:"4px 10px"},onClick:prevPeriod},["‹"]),
+    h("div",{style:{fontSize:15,fontWeight:700,color:"#1C1C1E"}},[ s.calView==="week"
+      ?`${weekDays[0].getDate()} ${MONTHS_EU[weekDays[0].getMonth()]} – ${weekDays[6].getDate()} ${MONTHS_EU[weekDays[6].getMonth()]} ${weekDays[6].getFullYear()}`
+      :`${MONTHS_FULL[month]} ${year}` ]),
+    h("button",{style:{background:"none",border:"none",fontSize:22,color:"#1C1C1E",padding:"4px 10px"},onClick:nextPeriod},["›"])
+  ]);
+
+  const body=h("div",{style:{padding:"12px 16px 120px"}});
+
+  if(s.calView==="week"){
+    weekDays.forEach(day=>{
+      const isToday=day.getTime()===todayD.getTime();
+      const dayTasks=s.tasks.filter(t=>shouldShowOnDate(t,day));
+      const card=h("div",{style:{background:"#fff",borderRadius:14,overflow:"hidden",marginBottom:10,boxShadow:isToday?"0 0 0 2px #FF6B35":"0 1px 6px rgba(0,0,0,0.06)"}},[
+        h("div",{style:{display:"flex",alignItems:"center",padding:"10px 14px",background:isToday?"#FFF3EE":"#FAFAF9",borderBottom:dayTasks.length?"1px solid #F0EDE8":"none"}},[
+          h("div",{style:{fontWeight:700,fontSize:13,color:isToday?"#FF6B35":"#1C1C1E",minWidth:24}},[DAYS_EU[day.getDay()]]),
+          h("div",{style:{width:28,height:28,borderRadius:"50%",background:isToday?"#FF6B35":"none",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:isToday?"#fff":"#555",marginLeft:6}},[String(day.getDate())]),
+          dayTasks.length?h("div",{style:{marginLeft:"auto",fontSize:11,color:"#8E8E93"}},[dayTasks.length+" zeregina"]):null
+        ]),
+        dayTasks.length===0?h("div",{style:{padding:"8px 14px",color:"#C0BAB3",fontSize:12,fontStyle:"italic"}},["Zereginen ez dago"]):null,
+        ...dayTasks.map(t=>{
+          const room=getRoom(t.room);
+          const done=isDone(t,day);
+          return h("div",{style:{display:"flex",alignItems:"center",padding:"9px 14px",borderBottom:"1px solid #F7F5F2",opacity:done?0.5:1,transition:"opacity 0.2s"},onClick:()=>toggleDone(t.id,day)},[
+            h("div",{style:{width:8,height:8,borderRadius:"50%",background:room.color,marginRight:10,flexShrink:0}}),
+            h("div",{style:{flex:1}},[
+              h("div",{style:{fontSize:13,fontWeight:600,color:"#1C1C1E",textDecoration:done?"line-through":"none"}},[t.title]),
+              h("div",{style:{fontSize:11,color:room.color,marginTop:1}},[room.emoji+" "+room.name])
+            ]),
+            h("div",{style:{width:22,height:22,borderRadius:"50%",border:`2px solid ${done?room.color:"#D0CBC4"}`,background:done?room.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff",flexShrink:0,transition:"all 0.2s"}},[done?"✓":""])
+          ]);
+        })
+      ]);
+      body.appendChild(card);
+    });
+  } else {
+    // Month completion badge
+    const mPct=getMonthRate(s.tasks,year,month);
+    if(mPct!==null){
+      const circ=2*Math.PI*22;
+      const badge=h("div",{style:{background:"#fff",borderRadius:14,padding:"14px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}},[
+        h("div",{style:{position:"relative",width:54,height:54,flexShrink:0}},[
+          (()=>{
+            const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+            svg.setAttribute("width","54");svg.setAttribute("height","54");svg.setAttribute("viewBox","0 0 54 54");
+            const bg=document.createElementNS("http://www.w3.org/2000/svg","circle");
+            bg.setAttribute("cx","27");bg.setAttribute("cy","27");bg.setAttribute("r","22");bg.setAttribute("fill","none");bg.setAttribute("stroke","#F0EDE8");bg.setAttribute("stroke-width","5");
+            const fg=document.createElementNS("http://www.w3.org/2000/svg","circle");
+            fg.setAttribute("cx","27");fg.setAttribute("cy","27");fg.setAttribute("r","22");fg.setAttribute("fill","none");fg.setAttribute("stroke",completionColor(mPct));fg.setAttribute("stroke-width","5");
+            fg.setAttribute("stroke-dasharray",`${mPct/100*circ} ${circ}`);fg.setAttribute("stroke-linecap","round");fg.setAttribute("transform","rotate(-90 27 27)");
+            svg.appendChild(bg);svg.appendChild(fg);return svg;
+          })(),
+          h("div",{style:{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:completionColor(mPct)}},[mPct+"%"])
+        ]),
+        h("div",{},[
+          h("div",{style:{fontSize:13,fontWeight:700,color:"#1C1C1E"}},["Hilabeteko betetze maila"]),
+          h("div",{style:{fontSize:11,color:"#8E8E93",marginTop:2}},["Oraingo egunera arte"]),
+          h("div",{style:{fontSize:11,marginTop:3,color:completionColor(mPct),fontWeight:600}},[mPct>=80?"🌟 Bikaina!":mPct>=50?"👍 Aurrera!":"💪 Saia zaitez!"])
+        ])
+      ]);
+      body.appendChild(badge);
+    }
+
+    // Day headers
+    const grid=h("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}});
+    DAYS_EU.forEach(d=>grid.appendChild(h("div",{style:{textAlign:"center",fontSize:10,fontWeight:700,color:"#8E8E93",padding:"4px 0"}},[d])));
+    body.appendChild(grid);
+
+    const cells=h("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}});
+    const firstDay=getFirstDayOfMonth(year,month);
+    for(let i=0;i<firstDay;i++) cells.appendChild(h("div",{}));
+    const dim=getDaysInMonth(year,month);
+    const nowFull=new Date();
+    for(let i=1;i<=dim;i++){
+      const dayDate=new Date(year,month,i);
+      const isToday=dayDate.getTime()===todayD.getTime();
+      const dayPast=dayDate<todayD||(isToday&&nowFull.getHours()>=23);
+      const dayPct=dayPast?getDayRate(s.tasks,dayDate):null;
+      const dayTasks=s.tasks.filter(t=>shouldShowOnDate(t,dayDate));
+      const cell=h("div",{style:{background:isToday?"#FF6B35":"#fff",borderRadius:8,minHeight:54,padding:"4px 3px",boxShadow:"0 1px 4px rgba(0,0,0,0.06)",border:isToday?"none":"1px solid #F0EDE8",position:"relative",overflow:"hidden"}});
+      if(dayPct!==null&&!isToday){
+        cell.appendChild(h("div",{style:{position:"absolute",bottom:0,left:0,right:0,height:dayPct+"%",background:completionColor(dayPct)+"22",borderRadius:"0 0 8px 8px"}}));
+      }
+      cell.appendChild(h("div",{style:{textAlign:"center",fontWeight:700,fontSize:12,color:isToday?"#fff":"#1C1C1E",marginBottom:2,position:"relative"}},[String(i)]));
+      const dots=h("div",{style:{display:"flex",flexWrap:"wrap",gap:2,justifyContent:"center",position:"relative"}});
+      dayTasks.slice(0,3).forEach(t=>{
+        const room=getRoom(t.room);
+        const done=isDone(t,dayDate);
+        const dot=h("div",{style:{width:6,height:6,borderRadius:"50%",background:done?"#C0BAB3":room.color}});
+        dot.addEventListener("click",e=>{e.stopPropagation();toggleDone(t.id,dayDate);});
+        dots.appendChild(dot);
+      });
+      cell.appendChild(dots);
+      if(dayPct!==null){
+        cell.appendChild(h("div",{style:{textAlign:"center",fontSize:8,fontWeight:800,color:isToday?"rgba(255,255,255,0.9)":completionColor(dayPct),marginTop:1,position:"relative"}},[dayPct+"%"]));
+      }
+      cells.appendChild(cell);
+    }
+    body.appendChild(cells);
+
+    // Legend
+    const legend=h("div",{style:{marginTop:14,background:"#fff",borderRadius:14,padding:"12px 14px"}});
+    legend.appendChild(h("div",{style:{fontSize:11,fontWeight:700,color:"#1C1C1E",marginBottom:8}},["Koloreak"]));
+    const legColors=h("div",{style:{display:"flex",gap:10,marginBottom:8,flexWrap:"wrap"}});
+    [["#27AE60","≥80%"],["#F39C12","50–79%"],["#E74C3C","<50%"]].forEach(([c,l])=>{
+      legColors.appendChild(h("div",{style:{display:"flex",alignItems:"center",gap:4}},[
+        h("div",{style:{width:10,height:10,borderRadius:3,background:c+"33",border:`2px solid ${c}`}}),
+        h("span",{style:{fontSize:10,color:"#555"}},[l])
+      ]));
+    });
+    legend.appendChild(legColors);
+    const legRooms=h("div",{style:{display:"flex",flexWrap:"wrap",gap:7}});
+    ROOMS.forEach(r=>{
+      legRooms.appendChild(h("div",{style:{display:"flex",alignItems:"center",gap:4}},[
+        h("div",{style:{width:7,height:7,borderRadius:"50%",background:r.color}}),
+        h("span",{style:{fontSize:10,color:"#555"}},[r.emoji+" "+r.name])
+      ]));
+    });
+    legend.appendChild(legRooms);
+    body.appendChild(legend);
+  }
+
+  return h("div",{},[toggle,nav,body]);
+}
+
+// ── TASKS ─────────────────────────────────────────────────────────────
+function buildTasks(){
+  const s=state;
+  const wrap=h("div",{style:{padding:"16px 16px 120px"}});
+
+  // Filter pills
+  const pills=h("div",{style:{display:"flex",gap:7,overflowX:"auto",paddingBottom:10,marginBottom:6}});
+  const allBtn=h("button",{style:{flexShrink:0,padding:"6px 14px",borderRadius:20,border:"none",background:s.filterRoom==="all"?"#1C1C1E":"#E8E5E0",color:s.filterRoom==="all"?"#fff":"#555",fontSize:12,fontWeight:600},onClick:()=>setState({filterRoom:"all"},true)},["Denak"]);
+  pills.appendChild(allBtn);
+  ROOMS.forEach(r=>{
+    pills.appendChild(h("button",{style:{flexShrink:0,padding:"6px 14px",borderRadius:20,border:"none",background:s.filterRoom===r.id?r.color:r.bg,color:s.filterRoom===r.id?"#fff":r.color,fontSize:12,fontWeight:600},onClick:()=>setState({filterRoom:r.id},true)},[r.emoji+" "+r.name]));
+  });
+  wrap.appendChild(pills);
+
+  const filtered=s.tasks.filter(t=>s.filterRoom==="all"||t.room===s.filterRoom);
+  ROOMS.filter(r=>s.filterRoom==="all"||r.id===s.filterRoom).forEach(room=>{
+    const roomTasks=s.tasks.filter(t=>t.room===room.id);
+    if(!roomTasks.length)return;
+    const section=h("div",{style:{marginBottom:18}});
+    section.appendChild(h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},[
+      h("div",{style:{width:3,height:18,borderRadius:2,background:room.color}}),
+      h("span",{style:{fontSize:14,fontWeight:700,color:"#1C1C1E"}},[room.emoji+" "+room.name]),
+      h("span",{style:{fontSize:11,color:"#8E8E93",marginLeft:"auto"}},[roomTasks.length+" zeregina"])
+    ]));
+    const list=h("div",{style:{background:"#fff",borderRadius:14,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}});
+    roomTasks.forEach((t,idx)=>{
+      const rep=REPEAT_OPTIONS.find(o=>o.value===t.repeat);
+      const row=h("div",{style:{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:idx<roomTasks.length-1?"1px solid #F7F5F2":"none"}},[
+        h("div",{style:{flex:1}},[
+          h("div",{style:{fontSize:14,fontWeight:600,color:"#1C1C1E"}},[t.title]),
+          h("div",{style:{fontSize:11,color:"#8E8E93",marginTop:2}},[
+            h("span",{style:{background:room.bg,color:room.color,padding:"2px 7px",borderRadius:8,fontWeight:600}},[rep?.label||""]),
+            h("span",{style:{marginLeft:6}},[t.date])
+          ])
+        ]),
+        h("button",{style:{background:"none",border:"none",fontSize:15,color:"#8E8E93",padding:"4px 6px"},onClick:()=>openEditModal(t)},["✏️"]),
+        h("button",{style:{background:"none",border:"none",fontSize:16,color:"#C0BAB3",padding:"4px 8px"},onClick:()=>deleteTask(t.id)},["🗑️"])
+      ]);
+      list.appendChild(row);
+    });
+    section.appendChild(list);
+    wrap.appendChild(section);
+  });
+  if(!filtered.length){
+    wrap.appendChild(h("div",{style:{textAlign:"center",padding:40,color:"#C0BAB3",fontSize:14,fontStyle:"italic"}},["Ez dago zeregenik"]));
+  }
+  return wrap;
+}
+
+// ── STATS ─────────────────────────────────────────────────────────────
+function buildStats(){
+  const s=state;
+  const now=new Date();
+  const wrap=h("div",{style:{padding:"16px 16px 120px"}});
+
+  // Build months
+  const statsMonths=[];
+  for(let m=5;m>=0;m--){
+    const d=new Date(now.getFullYear(),now.getMonth()-m,1);
+    const y=d.getFullYear(),mo=d.getMonth();
+    const key=`${y}-${mo}`;
+    const isCurrent=m===0;
+    let pct=getMonthRate(s.tasks,y,mo);
+    if(!isCurrent&&pct===null)pct=s.demoHistory[key]??null;
+    statsMonths.push({year:y,month:mo,key,label:MONTHS_EU[mo],fullLabel:MONTHS_FULL[mo],pct,isCurrent});
+  }
+
+  // Monthly bars
+  const monthCard=h("div",{style:{background:"#fff",borderRadius:16,padding:"18px 16px",marginBottom:16,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}});
+  monthCard.appendChild(h("div",{style:{fontSize:14,fontWeight:700,color:"#1C1C1E",marginBottom:4}},["Hilabeteka betetze maila"]));
+  monthCard.appendChild(h("div",{style:{fontSize:11,color:"#8E8E93",marginBottom:16}},["Azken 6 hilabeteak • gaueko 23:00tan"]));
+  const barsWrap=h("div",{style:{display:"flex",flexDirection:"column",gap:10}});
+  statsMonths.forEach((m,idx)=>{
+    const row=h("div",{style:{display:"flex",alignItems:"center",gap:10}});
+    const lbl=h("div",{style:{width:32,fontSize:11,fontWeight:700,color:m.isCurrent?"#FF6B35":"#555",flexShrink:0,textAlign:"right"}});
+    lbl.textContent=m.label;
+    if(m.isCurrent){const sub=document.createElement("div");sub.style.cssText="font-size:8px;color:#FF6B35;font-weight:600";sub.textContent="orain";lbl.appendChild(sub);}
+    row.appendChild(lbl);
+    if(m.pct!==null){
+      const barColor=m.isCurrent?"#FF6B35":completionColor(m.pct);
+      const outer=h("div",{style:{flex:1,height:28,background:"#F0EDE8",borderRadius:8,overflow:"hidden",position:"relative"}});
+      const inner=h("div",{class:"anim-bar-inner",style:{width:"0%",height:"100%",background:barColor,borderRadius:8,transition:"width 0.7s cubic-bezier(0.4,0,0.2,1)",display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:8,boxSizing:"border-box"}});
+      inner.dataset.pct=m.pct;inner.dataset.delay=idx*80;
+      if(m.pct>=20)inner.appendChild(h("span",{style:{fontSize:11,fontWeight:700,color:"#fff"}},[m.pct+"%"]));
+      outer.appendChild(inner);
+      if(m.pct<20&&m.pct>0){
+        const lbl2=h("span",{style:{position:"absolute",left:"4%",top:"50%",transform:"translateY(-50%)",fontSize:11,fontWeight:700,color:"#555"}},[m.pct+"%"]);
+        outer.appendChild(lbl2);
+      }
+      row.appendChild(outer);
+    } else {
+      row.appendChild(h("div",{style:{flex:1,height:28,background:"#F0EDE8",borderRadius:8,display:"flex",alignItems:"center",paddingLeft:10}},[h("span",{style:{fontSize:11,color:"#C0BAB3",fontStyle:"italic"}},["Daturik ez"])]));
+    }
+    barsWrap.appendChild(row);
+  });
+  monthCard.appendChild(barsWrap);
+  const legBar=h("div",{style:{display:"flex",gap:12,marginTop:14,paddingTop:12,borderTop:"1px solid #F0EDE8",flexWrap:"wrap"}});
+  [["#27AE60","≥80% Bikaina"],["#F39C12","50–79% Ongi"],["#E74C3C","<50% Hobetu"]].forEach(([c,l])=>{
+    legBar.appendChild(h("div",{style:{display:"flex",alignItems:"center",gap:5}},[h("div",{style:{width:10,height:10,borderRadius:3,background:c}}),h("span",{style:{fontSize:10,color:"#555"}},[l])]));
+  });
+  monthCard.appendChild(legBar);
+  wrap.appendChild(monthCard);
+
+  // Per room current month
+  const roomCard=h("div",{style:{background:"#fff",borderRadius:16,padding:"18px 16px",marginBottom:16,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}});
+  roomCard.appendChild(h("div",{style:{fontSize:14,fontWeight:700,color:"#1C1C1E",marginBottom:4}},["Gelaka • "+MONTHS_FULL[now.getMonth()]]));
+  roomCard.appendChild(h("div",{style:{fontSize:11,color:"#8E8E93",marginBottom:16}},["Oraingo hilabetea gelaz gela"]));
+  const roomStats=ROOMS.map(r=>({...r,pct:getMonthRate(s.tasks.filter(t=>t.room===r.id),now.getFullYear(),now.getMonth())})).filter(r=>r.pct!==null);
+  if(!roomStats.length){
+    roomCard.appendChild(h("div",{style:{color:"#C0BAB3",fontSize:13,fontStyle:"italic",textAlign:"center",padding:16}},["Oraindik ez dago daturik"]));
+  } else {
+    const rWrap=h("div",{style:{display:"flex",flexDirection:"column",gap:10}});
+    roomStats.forEach((r,idx)=>{
+      const row=h("div",{style:{display:"flex",alignItems:"center",gap:10}});
+      row.appendChild(h("div",{style:{width:36,fontSize:16,flexShrink:0,textAlign:"center"}},[r.emoji]));
+      const right=h("div",{style:{flex:1}});
+      right.appendChild(h("div",{style:{fontSize:11,fontWeight:700,color:"#1C1C1E",marginBottom:4}},[r.name]));
+      const outer=h("div",{style:{flex:1,height:28,background:"#F0EDE8",borderRadius:8,overflow:"hidden",position:"relative"}});
+      const inner=h("div",{class:"anim-bar-inner",style:{width:"0%",height:"100%",background:r.color,borderRadius:8,transition:"width 0.7s cubic-bezier(0.4,0,0.2,1)",display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:8,boxSizing:"border-box"}});
+      inner.dataset.pct=r.pct;inner.dataset.delay=idx*80;
+      if(r.pct>=20)inner.appendChild(h("span",{style:{fontSize:11,fontWeight:700,color:"#fff"}},[r.pct+"%"]));
+      outer.appendChild(inner);
+      right.appendChild(outer);
+      row.appendChild(right);
+      rWrap.appendChild(row);
+    });
+    roomCard.appendChild(rWrap);
+  }
+  wrap.appendChild(roomCard);
+
+  // Summary cards
+  const validM=statsMonths.filter(m=>m.pct!==null);
+  const avg=validM.length?Math.round(validM.reduce((a,m)=>a+m.pct,0)/validM.length):null;
+  const best=validM.length?validM.reduce((a,m)=>m.pct>a.pct?m:a):null;
+  const curr=statsMonths[statsMonths.length-1];
+  const trend=validM.length>=2?(validM[validM.length-1].pct-validM[validM.length-2].pct):null;
+  const cards=[
+    {label:"Batez bestekoa",value:avg!==null?avg+"%":"—",icon:"📊",color:"#4ECDC4"},
+    {label:"Onenak",value:best?best.pct+"% ("+best.label+")":"—",icon:"🏆",color:"#F39C12"},
+    {label:"Oraingo hila",value:curr?.pct!==null?curr.pct+"%":"—",icon:"📅",color:"#FF6B35"},
+    {label:"Joera",value:trend!==null?(trend>=0?"+"+trend+"%":trend+"%"):"—",icon:trend!==null&&trend>=0?"📈":"📉",color:trend!==null&&trend>=0?"#27AE60":"#E74C3C"}
+  ];
+  const cardGrid=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}});
+  cards.forEach(c=>{
+    cardGrid.appendChild(h("div",{style:{background:"#fff",borderRadius:14,padding:"14px 12px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}},[
+      h("div",{style:{fontSize:20,marginBottom:4}},[c.icon]),
+      h("div",{style:{fontSize:18,fontWeight:800,color:c.color}},[c.value]),
+      h("div",{style:{fontSize:10,color:"#8E8E93",marginTop:2}},[c.label])
+    ]));
+  });
+  wrap.appendChild(cardGrid);
+  return wrap;
+}
+
+// ── MODAL ─────────────────────────────────────────────────────────────
+function buildModal(){
+  const s=state;
+  const overlay=h("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200,display:"flex",alignItems:"flex-end"}});
+  const panel=h("div",{style:{background:"#fff",borderRadius:"20px 20px 0 0",padding:"24px 20px",paddingBottom:"max(40px, calc(env(safe-area-inset-bottom,0px) + 24px))",width:"100%",maxWidth:430,margin:"0 auto"}});
+
+  panel.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},[
+    h("div",{style:{fontSize:18,fontWeight:700,color:"#1C1C1E"}},[s.editingTask?"Zeregina editatu":"Zeregina gehitu"]),
+    h("button",{style:{background:"#F0EDE8",border:"none",borderRadius:"50%",width:30,height:30,fontSize:16},onClick:closeModal},["✕"])
+  ]));
+
+  // Title input
+  const inp=h("input",{style:{padding:"12px 14px",borderRadius:12,border:"1.5px solid #E8E5E0",fontSize:15,outline:"none",width:"100%",marginBottom:14}});
+  inp.placeholder="Zeregina...";
+  inp.value=s.newTask.title;
+  inp.addEventListener("input",e=>{ s.newTask.title=e.target.value; });
+  panel.appendChild(inp);
+
+  // Room
+  panel.appendChild(h("div",{style:{fontSize:12,fontWeight:700,color:"#8E8E93",marginBottom:8,letterSpacing:"0.5px"}},["GELA"]));
+  const roomWrap=h("div",{style:{display:"flex",flexWrap:"wrap",gap:7,marginBottom:14}});
+  ROOMS.forEach(r=>{
+    const btn=h("button",{style:{padding:"7px 12px",borderRadius:20,border:"none",background:s.newTask.room===r.id?r.color:r.bg,color:s.newTask.room===r.id?"#fff":r.color,fontSize:12,fontWeight:600},onClick:()=>{
+      s.newTask.room=r.id;
+      // Update all room buttons
+      roomWrap.querySelectorAll("button").forEach((b,i)=>{
+        const ri=ROOMS[i];
+        b.style.background=s.newTask.room===ri.id?ri.color:ri.bg;
+        b.style.color=s.newTask.room===ri.id?"#fff":ri.color;
+      });
+    }},[r.emoji+" "+r.name]);
+    roomWrap.appendChild(btn);
+  });
+  panel.appendChild(roomWrap);
+
+  // Date
+  panel.appendChild(h("div",{style:{fontSize:12,fontWeight:700,color:"#8E8E93",marginBottom:8,letterSpacing:"0.5px"}},["HASIERA DATA"]));
+  const datInp=h("input",{style:{padding:"10px 14px",borderRadius:12,border:"1.5px solid #E8E5E0",fontSize:14,outline:"none",width:"100%",marginBottom:14}});
+  datInp.type="date";datInp.value=s.newTask.date;
+  datInp.addEventListener("change",e=>{ s.newTask.date=e.target.value; });
+  panel.appendChild(datInp);
+
+  // Repeat
+  panel.appendChild(h("div",{style:{fontSize:12,fontWeight:700,color:"#8E8E93",marginBottom:8,letterSpacing:"0.5px"}},["ERREPIKATZEA"]));
+  const repWrap=h("div",{style:{display:"flex",flexWrap:"wrap",gap:7,marginBottom:14}});
+  REPEAT_OPTIONS.forEach(o=>{
+    const btn=h("button",{style:{padding:"7px 12px",borderRadius:20,border:"none",background:s.newTask.repeat===o.value?"#1C1C1E":"#F0EDE8",color:s.newTask.repeat===o.value?"#fff":"#555",fontSize:12,fontWeight:600},onClick:()=>{
+      s.newTask.repeat=o.value;
+      repWrap.querySelectorAll("button").forEach((b,i)=>{
+        b.style.background=s.newTask.repeat===REPEAT_OPTIONS[i].value?"#1C1C1E":"#F0EDE8";
+        b.style.color=s.newTask.repeat===REPEAT_OPTIONS[i].value?"#fff":"#555";
+      });
+    }},[o.label]);
+    repWrap.appendChild(btn);
+  });
+  panel.appendChild(repWrap);
+
+  panel.appendChild(h("button",{style:{background:"#FF6B35",color:"#fff",border:"none",borderRadius:14,padding:14,fontSize:15,fontWeight:700,width:"100%",boxShadow:"0 4px 16px rgba(255,107,53,0.35)"},onClick:saveTask},[s.editingTask?"Gorde ✓":"Gehitu ✓"]));
+
+  overlay.appendChild(panel);
+  overlay.addEventListener("click",e=>{if(e.target===overlay)closeModal();});
+  return overlay;
+}
+
+// ── Actions ───────────────────────────────────────────────────────────
+function toggleDone(taskId,date){
+  const key=dateKey(date);
+  const tasks=state.tasks.map(t=>{
+    if(t.id!==taskId)return t;
+    const done={...t.done};done[key]=!done[key];
+    return{...t,done};
+  });
+  setState({tasks});
+}
+function openAddModal(){
+  setState({showModal:true,editingTask:null,newTask:{title:"",room:"sukaldea",date:today(),repeat:"weekly"}},true);
+}
+function openEditModal(task){
+  setState({showModal:true,editingTask:task,newTask:{title:task.title,room:task.room,date:task.date,repeat:task.repeat}},true);
+}
+function closeModal(){setState({showModal:false,editingTask:null},true);}
+function saveTask(){
+  if(!state.newTask.title.trim())return;
+  let tasks;
+  if(state.editingTask){
+    tasks=state.tasks.map(t=>t.id===state.editingTask.id?{...t,...state.newTask}:t);
+  } else {
+    tasks=[...state.tasks,{...state.newTask,id:Date.now(),done:{}}];
+  }
+  setState({tasks,showModal:false,editingTask:null});
+}
+function deleteTask(id){
+  setState({tasks:state.tasks.filter(t=>t.id!==id)});
+}
+function prevPeriod(){
+  const d=new Date(state.currentDate);
+  if(state.calView==="week")d.setDate(d.getDate()-7);
+  else d.setMonth(d.getMonth()-1);
+  setState({currentDate:d},true);
+}
+function nextPeriod(){
+  const d=new Date(state.currentDate);
+  if(state.calView==="week")d.setDate(d.getDate()+7);
+  else d.setMonth(d.getMonth()+1);
+  setState({currentDate:d},true);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>
