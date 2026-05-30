@@ -1,1 +1,1 @@
-# Etxeko-zeregina
+# Etxeko-zereginak
